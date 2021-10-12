@@ -42,7 +42,5 @@ class MetaBaseline(nn.Module):
             x_shot = x_shot.mean(dim=-2)
             metric = 'sqr'
 
-        logits = utils.compute_logits(
-                x_query, x_shot, metric=metric, temp=self.temp)
-        return logits
+        return x_shot, x_query, metric
 
