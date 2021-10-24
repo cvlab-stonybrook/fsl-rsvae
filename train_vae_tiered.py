@@ -21,7 +21,9 @@ import datasets.feature_loader as feat_loader
 from sklearn.manifold import TSNE
 import h5py
 from scipy.stats import multivariate_normal
+from sklearn.decomposition import PCA
 import scipy
+from scipy.io import savemat, loadmat
 def finetune_vae(feats_vae, x_shot, label_real):
     attributes = np.load('./mini_attr.npy')
     x_shot = x_shot.detach()
@@ -90,30 +92,14 @@ def det(matrix):
 
 
 def remove_feats(cl_data_file):
-    cl_mean_file = {}
-    cl_var_file = {}
-    weight_data_file = {}
-    scaler = StandardScaler()
+    prob_dict = loadmat('prob_matrix_tiered.mat')
     for k, v in cl_data_file.items():
-        v_ori = np.array(v)
-        v = scaler.fit_transform(v_ori)
-        v_mean = np.mean(v, 0, keepdims=True)
-        inv_var = scipy.linalg.inv(np.cov(v.T))
-        prob = np.sum(np.matmul((v-v_mean),inv_var)*(v-v_mean), -1)
-        prob = 1-scipy.stats.chi2.cdf(prob, 512)
+        prob = prob_dict[str(k)]
+        prob_idx = np.where(prob>0.05)[0]
         cl_data_file[k] = []
-        #rv = multivariate_normal(mean = cl_mean_file[k], cov = cl_var_file[k])
-        for idx in range(v_ori.shape[0]):
-          if prob[idx] > 0.7:
-            cl_data_file[k].append(v_ori[idx]) 
-        #for sidx in sort_idx:
-        #  cl_data_file[k].append(v[sidx])
-        #  cl_data_file[k].append((cl_mean_file[k] + (np.random.normal(v[sidx].shape)*0.001)).astype(np.float32))
-        #  weight_data_file[k].append(1./dist[sidx])
-        #all_feats = (np.random.multivariate_normal(mean=cl_mean_file[k], cov=cl_var_file[k], size=200)).astype(np.float32)
-        #for all_feat in all_feats:
-        #  cl_data_file[k].append(all_feat*0.3 + cl_mean_file[k]*0.7)
-
+        for idx in prob_idx:
+          cl_data_file[k].append(v[idx])
+    pdb.set_trace()
     return cl_data_file
 
 def interpolate_feats(cl_data_file):
@@ -129,7 +115,23 @@ def interpolate_feats(cl_data_file):
         sort_idx = np.argsort(dist)
         cl_data_file[k] = []
         for iv in sort_idx[:800]:
-          cl_data_file[k].append(0.7 * v[iv] + 0.3 * mean_feats)
+          cl_data_file[k].append(v[iv])
+
+    return cl_data_file
+
+def pca_feats(cl_data_file):
+    cl_mean_file = {}
+    scaler = StandardScaler()
+    #for k, v in cl_data_file.items():
+    #    cl_mean_file[k] = mean_feats
+    for k, v in cl_data_file.items():
+        v = np.array(v)
+        pca = PCA(n_components=250)
+        v2 = pca.fit_transform(v)
+        cl_data_file[k] = []
+        v = pca.inverse_transform(v2)
+        for iv in v:
+          cl_data_file[k].append(iv)
 
     return cl_data_file
 
@@ -163,10 +165,10 @@ class FeatsVAE(nn.Module):
     def __init__(self, x_dim, latent_dim):
         super(FeatsVAE, self).__init__()
         self.linear = nn.Sequential(
-            nn.Linear(x_dim, 2048),
-            nn.LeakyReLU(),
-            nn.Linear(2048, 4096),
-            nn.LeakyReLU(),
+            nn.Linear(x_dim, 4096),
+            #nn.LeakyReLU(),
+            #nn.Linear(2048, 4096),
+            nn.LeakyReLU())
         self.linear_mu =  nn.Sequential(
             nn.Linear(4096, latent_dim),
             nn.ReLU())
@@ -174,11 +176,11 @@ class FeatsVAE(nn.Module):
             nn.Linear(4096, latent_dim),
             nn.ReLU())
         self.model = nn.Sequential(
-            nn.Linear(2*latent_dim, 2048),
+            nn.Linear(2*latent_dim, 4096),
             nn.LeakyReLU(),
-            nn.Linear(2048, 2048),
-            nn.LeakyReLU(),
-            nn.Linear(2048, x_dim),
+            nn.Linear(4096, x_dim),
+            #nn.LeakyReLU(),
+            #nn.Linear(2048, x_dim),
             #nn.Sigmoid(),
         )
         self.bn1 = nn.BatchNorm1d(x_dim)
@@ -278,6 +280,7 @@ def train_vae(feature_loader, feats_vae, attributes):
       loss_kl_all = 0
       for idx, (data, label) in enumerate(feature_loader):
         data = data.cuda()
+        data = F.normalize(data, dim=-1)
         #weight = weight.cuda() / torch.sum(weight)
         attr = torch.from_numpy(attributes[label]).float().cuda()
         mu, logvar, recon_feats = feats_vae(data, attr)
@@ -286,7 +289,7 @@ def train_vae(feature_loader, feats_vae, attributes):
         #kl_loss = -0.5*torch.sum(1+logvar-logvar.exp()-mu.pow(2)) / data.shape[0]
         kl_loss = (1+logvar-logvar.exp()-mu.pow(2)).sum(1)
         kl_loss = -0.5*torch.mean(kl_loss)
-        L_vae = recon_loss+kl_loss*0.001
+        L_vae = recon_loss+kl_loss*0.005
         optimizer.zero_grad()
         L_vae.backward()   
         optimizer.step()
@@ -345,6 +348,8 @@ def visualize_feats(cl_data_file, vae_data_file):
 
 def save_vae_features(out_file, attr_out_dir):
     cl_data_file = feat_loader.init_loader(out_file)
+    #prob_matrix = remove_feats(cl_data_file)
+    #pdb.set_trace()
     cl_data_file = remove_feats(cl_data_file)
     feature_dataset = FeatureDataset(cl_data_file)
     feature_loader = torch.utils.data.DataLoader(feature_dataset, shuffle=True, pin_memory=True, drop_last=False, batch_size=256) 
@@ -353,9 +358,8 @@ def save_vae_features(out_file, attr_out_dir):
     feats_vae = FeatsVAE(512, 512).cuda()
     feats_vae = train_vae(feature_loader, feats_vae, attributes)
     #torch.save({'state': feats_vae.state_dict()}, 'feats_vae_mini.pth') 
-    pdb.set_trace()
-    #generate_feats(feats_vae, attributes, os.path.join(attr_out_dir, 'train_attr_ood.hdf5'), np.arange(0, 351))
-    #generate_feats(feats_vae, attributes_test, os.path.join(attr_out_dir, 'test_attr_ood.hdf5'), np.arange(0, 160))
+    generate_feats(feats_vae, attributes, os.path.join(attr_out_dir, 'train_attr_ood.hdf5'), np.arange(0, 351))
+    generate_feats(feats_vae, attributes_test, os.path.join(attr_out_dir, 'test_attr_ood.hdf5'), np.arange(0, 160))
     #return feats_vae
 
 
