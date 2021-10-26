@@ -92,14 +92,19 @@ def det(matrix):
 
 
 def remove_feats(cl_data_file):
-    prob_dict = loadmat('prob_matrix_tiered.mat')
+    prob_dict = loadmat('prob_matrix_tiered_1shot.mat')
     for k, v in cl_data_file.items():
         prob = prob_dict[str(k)]
-        prob_idx = np.where(prob>0.05)[0]
+        prob_idx = np.where(prob[0]>=0.2)[0]
+        #mean = np.mean(v, 0)
+        #dist = np.sum((v - mean)**2, 1)
+        #sort_idx = np.argsort(dist)
+        #cl_data_file[k] = []
+        #for iv in sort_idx[:800]:
+        #  cl_data_file[k].append(v[iv])
         cl_data_file[k] = []
         for idx in prob_idx:
           cl_data_file[k].append(v[idx])
-    pdb.set_trace()
     return cl_data_file
 
 def interpolate_feats(cl_data_file):
@@ -107,15 +112,21 @@ def interpolate_feats(cl_data_file):
     scaler = StandardScaler()
     #for k, v in cl_data_file.items():
     #    cl_mean_file[k] = mean_feats
+    prob_dict = {}
     for k, v in cl_data_file.items():
         v = np.array(v)
-        mean_feats = np.mean(v, 0)
+        mean = np.mean(v, 0)
+        inv_var = scipy.linalg.inv(np.cov(v.T))
+        prob = np.sum(np.matmul((v-mean),inv_var)*(v-mean), -1)
+        prob = 1-scipy.stats.chi2.cdf(prob, 512)
+        prob_dict[k] = list(prob)
         #v = v / np.sqrt(np.sum(v*v, 1, keepdims=True))
-        dist = np.sum((v - mean_feats)**2, 1)
-        sort_idx = np.argsort(dist)
-        cl_data_file[k] = []
-        for iv in sort_idx[:800]:
-          cl_data_file[k].append(v[iv])
+        #dist = np.sum((v - mean_feats)**2, 1)
+        #sort_idx = np.argsort(dist)
+        #cl_data_file[k] = []
+        #for iv in sort_idx[:1000]:
+        #  cl_data_file[k].append(v[iv])
+    pdb.set_trace()
 
     return cl_data_file
 
@@ -275,12 +286,12 @@ def generate_feats(feats_vae, attributes, output_file, label_list):
 def train_vae(feature_loader, feats_vae, attributes):
     optimizer = torch.optim.Adam(feats_vae.parameters(), lr=0.001)
     #for ep in range(10):
-    for ep in range(20):
+    for ep in range(25):
       loss_recon_all = 0
       loss_kl_all = 0
       for idx, (data, label) in enumerate(feature_loader):
         data = data.cuda()
-        data = F.normalize(data, dim=-1)
+        #data = F.normalize(data, dim=-1)
         #weight = weight.cuda() / torch.sum(weight)
         attr = torch.from_numpy(attributes[label]).float().cuda()
         mu, logvar, recon_feats = feats_vae(data, attr)
@@ -289,7 +300,7 @@ def train_vae(feature_loader, feats_vae, attributes):
         #kl_loss = -0.5*torch.sum(1+logvar-logvar.exp()-mu.pow(2)) / data.shape[0]
         kl_loss = (1+logvar-logvar.exp()-mu.pow(2)).sum(1)
         kl_loss = -0.5*torch.mean(kl_loss)
-        L_vae = recon_loss+kl_loss*0.005
+        L_vae = recon_loss+kl_loss*0.01
         optimizer.zero_grad()
         L_vae.backward()   
         optimizer.step()
@@ -348,9 +359,9 @@ def visualize_feats(cl_data_file, vae_data_file):
 
 def save_vae_features(out_file, attr_out_dir):
     cl_data_file = feat_loader.init_loader(out_file)
-    #prob_matrix = remove_feats(cl_data_file)
-    #pdb.set_trace()
     cl_data_file = remove_feats(cl_data_file)
+    #pdb.set_trace()
+    #cl_data_file = remove_feats(cl_data_file)
     feature_dataset = FeatureDataset(cl_data_file)
     feature_loader = torch.utils.data.DataLoader(feature_dataset, shuffle=True, pin_memory=True, drop_last=False, batch_size=256) 
     attributes = np.load('./tiered_attr_train_clip.npy')
