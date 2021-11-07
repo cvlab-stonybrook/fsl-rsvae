@@ -47,7 +47,6 @@ def finetune_vae(feats_vae, x_shot, label_real):
         mse_loss.backward()
         optimizer.step()
         print(mse_loss.item())
-    pdb.set_trace()
 
 
 
@@ -108,7 +107,7 @@ def remove_feats(cl_data_file):
         prob = 1-scipy.stats.chi2.cdf(prob, 512)
         #rv = multivariate_normal(mean = cl_mean_file[k], cov = cl_var_file[k])
         for idx in range(600):
-          if prob[idx] > 0.5:
+          if prob[idx] > 0.9:
             cl_data_file[k].append(v[idx]) 
         #for sidx in sort_idx:
         #  cl_data_file[k].append(v[sidx])
@@ -134,14 +133,17 @@ def interpolate_feats(cl_data_file):
 
     return cl_data_file
 
-def get_vae_center(out_dir, split='train'):
-    attr_out_file = os.path.join(out_dir, '%s_attr_ood.hdf5'%split)
+def get_vae_center(out_dir, split='train', use_mean=True):
+    attr_out_file = os.path.join(out_dir, '%s_attr_tmp.hdf5'%split)
     vae_data_file = feat_loader.init_loader(attr_out_file)
     if split == 'train':
       num = 64
     else:
       num = 20
-    vae_feats_all = torch.zeros((num, 512))
+    if use_mean:
+      vae_feats_all = torch.zeros((num, 512))
+    else:
+      vae_feats_all = torch.zeros((num, 20, 512))
     mean_data_file = {}
 
     for k, feats in vae_data_file.items():
@@ -151,7 +153,10 @@ def get_vae_center(out_dir, split='train'):
     for k, feats in vae_data_file.items():
         #mean_feats = np.array(feats)[:50]
         #mean_feats = 3*mean_feats - 2*mean_data_file[k]
-        mean_feats = np.mean(feats, 0)
+        if use_mean:
+          mean_feats = np.mean(feats, 0)
+        else:
+          mean_feats = np.array(feats)[:20]
         mean_feats = torch.from_numpy(mean_feats)
         mean_feats = F.normalize(mean_feats, dim=-1) 
         if split == 'test': 
@@ -164,7 +169,7 @@ class FeatsVAE(nn.Module):
     def __init__(self, x_dim, latent_dim):
         super(FeatsVAE, self).__init__()
         self.linear = nn.Sequential(
-            nn.Linear(x_dim, 4096),
+            nn.Linear(x_dim+latent_dim, 4096),
             nn.LeakyReLU())
         self.linear_mu =  nn.Sequential(
             nn.Linear(4096, latent_dim),
@@ -197,6 +202,7 @@ class FeatsVAE(nn.Module):
               m.bias.data.normal_(0, 0.02)
 
     def forward(self, x, attr):
+        x = torch.cat((x, attr), dim=1)
         x = self.linear(x)
         mu = self.linear_mu(x)
         logvar = self.linear_logvar(x)
@@ -206,7 +212,6 @@ class FeatsVAE(nn.Module):
         recon_feats = self.model(concat_feats)
         recon_feats = self.relu(self.bn1(recon_feats))
         return mu, logvar, recon_feats
-
 
 
 class FeatureDataset(DatasetFolder):
@@ -270,12 +275,11 @@ def generate_feats(feats_vae, attributes, output_file, label_list):
 def train_vae(feature_loader, feats_vae, attributes):
     optimizer = torch.optim.Adam(feats_vae.parameters(), lr=0.001)
     #for ep in range(10):
-    for ep in range(50):
+    for ep in range(60):
       loss_recon_all = 0
       loss_kl_all = 0
       for idx, (data, label) in enumerate(feature_loader):
         data = data.cuda()
-        data = F.normalize(data, dim=-1)
         #weight = weight.cuda() / torch.sum(weight)
         attr = torch.from_numpy(attributes[label]).float().cuda()
         mu, logvar, recon_feats = feats_vae(data, attr)
@@ -295,32 +299,35 @@ def train_vae(feature_loader, feats_vae, attributes):
     #torch.save({'state': feats_vae.state_dict()}, 'feats_vae_mini.pth') 
 
 
-def visualize_feats(cl_data_file, vae_data_file):
+def visualize_feats(feats_dir):
     visual_feats = []
     attr_feats = []
     visual_labels = []
     attr_labels = []
+    cl_data_file = os.path.join(feats_dir, 'test.hdf5')
+    cl_data_file = feat_loader.init_loader(cl_data_file)
+    vae_data_file = os.path.join(feats_dir, 'test_attr_ood.hdf5')
+    vae_data_file = feat_loader.init_loader(vae_data_file)
+    pdb.set_trace()
     #labels = [51, 3, 179, 7, 11, 175] 
     #labels = [15,6,17,8,9]
-    labels = [85, 86]
+    labels = [85, 86, 87, 88, 89]
     #labels = [13, 17, 21, 29, 33, 37]
     tsne = TSNE(n_components=2, random_state=0)
-    for idx in range(2):
+    for idx in range(5):
         label = labels[idx]
-        visual_feats.extend(cl_data_file[label-80][:300])
-        attr_feats.extend((vae_data_file[label][:300]))
+        visual_feats.extend(cl_data_file[label-80][:100])
+        #attr_feats.extend((vae_data_file[label][:300]))
         #attr_feats.extend(np.mean(np.array(vae_data_file[label]), 0, keepdims=True))
-        visual_labels.extend([idx]*len(cl_data_file[label-80][:300]))
-        attr_labels.extend([idx]*len(vae_data_file[label][:300]))
+        visual_labels.extend([idx]*len(cl_data_file[label-80][:100]))
+        #attr_labels.extend([idx]*len(vae_data_file[label][:300]))
         #attr_labels.extend([idx])
     visual_feats = np.array(visual_feats)
-    attr_feats = np.array(attr_feats)
-    all_feats = np.concatenate((visual_feats, attr_feats), 0)
-    feats_len = np.sum(all_feats*all_feats, 1)
-    feats_len = feats_len / np.sqrt(feats_len)
-    all_feats = all_feats / feats_len.reshape((-1, 1))
+    #attr_feats = np.array(attr_feats)
+    #all_feats = np.concatenate((visual_feats, attr_feats), 0)
     pdb.set_trace()
-    all_labels = visual_labels + attr_labels
+    all_labels = visual_labels 
+    all_feats = visual_feats
     all_feats_2D = tsne.fit_transform(all_feats)
     #all_feats_2D = tsne.fit_transform(visual_feats)
     #all_labels = visual_labels
@@ -349,8 +356,8 @@ def save_vae_features(out_file, attr_out_dir):
     feats_vae = FeatsVAE(512, 512).cuda()
     feats_vae = train_vae(feature_loader, feats_vae, attributes)
     #torch.save({'state': feats_vae.state_dict()}, 'feats_vae_mini.pth') 
-    generate_feats(feats_vae, attributes, os.path.join(attr_out_dir, 'train_attr_ood.hdf5'), np.arange(0, 64))
-    generate_feats(feats_vae, attributes, os.path.join(attr_out_dir, 'test_attr_ood.hdf5'), np.arange(80, 100))
+    #generate_feats(feats_vae, attributes, os.path.join(attr_out_dir, 'train_attr_tmp.hdf5'), np.arange(0, 64))
+    generate_feats(feats_vae, attributes, os.path.join(attr_out_dir, 'test_attr_tmp.hdf5'), np.arange(80, 100))
     #return feats_vae
 
 
