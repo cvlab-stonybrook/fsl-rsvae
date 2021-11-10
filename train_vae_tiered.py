@@ -95,7 +95,7 @@ def remove_feats(cl_data_file):
     prob_dict = loadmat('prob_matrix_tiered_1shot.mat')
     for k, v in cl_data_file.items():
         prob = prob_dict[str(k)]
-        prob_idx = np.where(prob[0]>=0.2)[0]
+        prob_idx = np.where(prob[0]>=0.6)[0]
         #mean = np.mean(v, 0)
         #dist = np.sum((v - mean)**2, 1)
         #sort_idx = np.argsort(dist)
@@ -146,24 +146,29 @@ def pca_feats(cl_data_file):
 
     return cl_data_file
 
-def get_vae_center(out_dir, split='train'):
-    attr_out_file = os.path.join(out_dir, '%s_attr_ood.hdf5'%split)
+def get_vae_center(out_dir, split='train', use_mean=True):
+    attr_out_file = os.path.join(out_dir, '%s_attr_tmp.hdf5'%split)
     vae_data_file = feat_loader.init_loader(attr_out_file)
     if split == 'train':
       num = 351
     else:
       num = 160
-    vae_feats_all = torch.zeros((num, 512))
+    if use_mean:
+      vae_feats_all = torch.zeros((num, 512))
+    else:
+      vae_feats_all = torch.zeros((num, 100, 512))
     mean_data_file = {}
 
     for k, feats in vae_data_file.items():
         mean_feats = np.mean(feats, 0)
         mean_data_file[k] = mean_feats
-
     for k, feats in vae_data_file.items():
         #mean_feats = np.array(feats)[:50]
         #mean_feats = 3*mean_feats - 2*mean_data_file[k]
-        mean_feats = np.mean(feats, 0)
+        if use_mean:
+          mean_feats = np.mean(feats, 0)
+        else:
+          mean_feats = np.array(feats)[:100]
         mean_feats = torch.from_numpy(mean_feats)
         mean_feats = F.normalize(mean_feats, dim=-1) 
         #if split == 'test': 
@@ -176,7 +181,7 @@ class FeatsVAE(nn.Module):
     def __init__(self, x_dim, latent_dim):
         super(FeatsVAE, self).__init__()
         self.linear = nn.Sequential(
-            nn.Linear(x_dim, 4096),
+            nn.Linear(x_dim+latent_dim, 4096),
             #nn.LeakyReLU(),
             #nn.Linear(2048, 4096),
             nn.LeakyReLU())
@@ -213,7 +218,8 @@ class FeatsVAE(nn.Module):
               m.bias.data.normal_(0, 0.02)
 
     def forward(self, x, attr):
-        x = self.linear(x)
+        x_concat = torch.cat((x, attr), dim=1)
+        x = self.linear(x_concat)
         mu = self.linear_mu(x)
         logvar = self.linear_logvar(x)
         latent_feats = self.reparameterize(mu, logvar)
@@ -286,7 +292,7 @@ def generate_feats(feats_vae, attributes, output_file, label_list):
 def train_vae(feature_loader, feats_vae, attributes):
     optimizer = torch.optim.Adam(feats_vae.parameters(), lr=0.001)
     #for ep in range(10):
-    for ep in range(25):
+    for ep in range(35):
       loss_recon_all = 0
       loss_kl_all = 0
       for idx, (data, label) in enumerate(feature_loader):
@@ -300,7 +306,7 @@ def train_vae(feature_loader, feats_vae, attributes):
         #kl_loss = -0.5*torch.sum(1+logvar-logvar.exp()-mu.pow(2)) / data.shape[0]
         kl_loss = (1+logvar-logvar.exp()-mu.pow(2)).sum(1)
         kl_loss = -0.5*torch.mean(kl_loss)
-        L_vae = recon_loss+kl_loss*0.01
+        L_vae = recon_loss+kl_loss*0.05
         optimizer.zero_grad()
         L_vae.backward()   
         optimizer.step()
@@ -311,51 +317,157 @@ def train_vae(feature_loader, feats_vae, attributes):
     return feats_vae
     ##torch.save({'state': feats_vae.state_dict()}, 'feats_vae_mini.pth') 
 
+def visualize_ood(feats_dir):
+    cl_data_file = os.path.join(feats_dir, 'test.hdf5')
+    cl_data_file = feat_loader.init_loader(cl_data_file)
+    vae_data_file = os.path.join(feats_dir, 'test_attr.hdf5')
+    vae_data_file = feat_loader.init_loader(vae_data_file)
+    ood_data_file = os.path.join(feats_dir, 'test_attr_ood.hdf5')
+    ood_data_file = feat_loader.init_loader(ood_data_file)
+    cls_mean = np.zeros((160, 512))
+    vae_mean = np.zeros((160, 512))
+    ood_mean = np.zeros((160, 512))
+    for l in np.arange(0, 160):
+      cls_feats = np.array(cl_data_file[l])
+      cls_feats = cls_feats / np.sqrt(np.sum(cls_feats**2, 1, keepdims=True))
+      vae_feats = np.array(vae_data_file[l])
+      vae_feats = vae_feats / np.sqrt(np.sum(vae_feats**2, 1, keepdims=True))
+      ood_feats = np.array(ood_data_file[l])
+      ood_feats = ood_feats / np.sqrt(np.sum(ood_feats**2, 1, keepdims=True))
+      cls_mean[l] = np.mean(cls_feats, 0)
+      vae_mean[l] = np.mean(vae_feats, 0)
+      ood_mean[l] = np.mean(ood_feats, 0)
+      dist = np.sum((cls_feats-cls_mean[l])**2, 1)
+      cl_data_file[l] = np.array(cls_feats)[np.argsort(dist)]
+      dist = np.sum((ood_feats-ood_mean[l])**2, 1)
+      ood_data_file[l] = np.array(ood_feats)[np.argsort(dist)]
+    cls_vae_dist = np.sum((cls_mean - vae_mean)**2, 1)
+    cls_ood_dist = np.sum((cls_mean - ood_mean)**2, 1)
+    vae_ood_dist = cls_ood_dist - cls_vae_dist
+    vis_real = []
+    vae_real = []
+    ood_real = []
+    for l in [122, 129, 33]:
+      vis_real.extend(cl_data_file[l][:50])
+      vae_real.extend(vae_data_file[l][:50])
+      ood_real.extend(ood_data_file[l][:50])
+    all_feats = np.concatenate((np.array(vis_real), np.array(vae_real)), 0) 
+    all_feats = np.concatenate((all_feats, np.array(ood_real)), 0) 
+    all_feats = all_feats / np.sqrt(np.sum(all_feats**2, 1, keepdims=True))
+    all_labels = [0] * 50 + [1] * 50 + [2] * 50
+    all_labels = all_labels * 3
+    tsne = TSNE(n_components=2, random_state=0)
+    all_feats_2D = tsne.fit_transform(all_feats)
+    colors = ['r', 'g', 'b']
+    fig, axes = plt.subplots(1, 4, figsize=(28, 6), sharex=True, sharey=True)
+    plt.rcParams.update({'font.size': 18})
+    for idx in range(all_feats_2D.shape[0]):
+        feat = all_feats_2D[idx]
+        color = colors[all_labels[idx]]
+        if np.abs(feat[0]) > 50 or np.abs(feat[1]) > 50:
+          continue
+        if idx in [0, 50, 100]:
+          marker = '*'
+          size = 128
+          alpha = 1
+          axes[0].scatter(feat[0], feat[1], c=color, marker=marker, s=size, alpha=alpha) 
+          axes[1].scatter(feat[0], feat[1], c=color, marker=marker, s=size, alpha=alpha) 
+          axes[2].scatter(feat[0], feat[1], c=color, marker=marker, s=size, alpha=alpha) 
+          axes[3].scatter(feat[0], feat[1], c=color, marker=marker, s=size, alpha=alpha) 
+        elif idx < 150:
+          marker = 'o'
+          size = 64
+          alpha = 1
+          axes[1].scatter(feat[0], feat[1], c=color, marker=marker, s=size, alpha=alpha) 
+          axes[2].scatter(feat[0], feat[1], c=color, marker=marker, s=size, alpha=alpha) 
+          axes[3].scatter(feat[0], feat[1], c=color, marker=marker, s=size, alpha=alpha) 
+        elif idx >= 150 and idx < 300:
+          marker = 'x'
+          size = 64
+          alpha = 0.3
+          axes[2].scatter(feat[0], feat[1], c=color, marker=marker, s=size, alpha=alpha) 
+          #continue
+        else:
+          marker = 'x'
+          size = 64
+          alpha = 0.3
+          axes[3].scatter(feat[0], feat[1], c=color, marker=marker, s=size, alpha=alpha) 
+    axes[0].set_title('Support Features') 
+    axes[1].set_title('Query Features') 
+    axes[2].set_title('Generated Features with SVAE') 
+    axes[3].set_title('Generated Features with SVAE*') 
+    plt.tight_layout()
+    plt.savefig('features_base_mini.pdf')
 
-def visualize_feats(cl_data_file, vae_data_file):
+    pdb.set_trace()
+def visualize_feats(feats_dir):
     visual_feats = []
     attr_feats = []
+    ood_feats = []
     visual_labels = []
     attr_labels = []
+    ood_labels = []
+    cl_data_file = os.path.join(feats_dir, 'test.hdf5')
+    cl_data_file = feat_loader.init_loader(cl_data_file)
+    vae_data_file = os.path.join(feats_dir, 'test_attr_ood.hdf5')
+    vae_data_file = feat_loader.init_loader(vae_data_file)
     #labels = [51, 3, 179, 7, 11, 175] 
-    #labels = [15,6,17,8,9]
-    labels = [85, 86]
+    labels = [15, 115, 37, 8, 9]
+    for l in labels:
+        cls_feats = np.array(cl_data_file[l])
+        vae_feats = np.array(vae_data_file[l])
+        cls_feats = cls_feats / np.sqrt(np.sum(cls_feats**2, 1, keepdims=True))
+        vae_feats = vae_feats / np.sqrt(np.sum(vae_feats**2, 1, keepdims=True))
+        cls_center = np.mean(vae_feats, 0)
+        dist = np.sum((cls_feats-cls_center)**2, 1)
+        cl_data_file[l] = np.array(cls_feats)[np.argsort(dist)]
     #labels = [13, 17, 21, 29, 33, 37]
     tsne = TSNE(n_components=2, random_state=0)
-    for idx in range(2):
+    for idx in range(5):
         label = labels[idx]
-        visual_feats.extend(cl_data_file[label-80][:300])
-        attr_feats.extend((vae_data_file[label][:300]))
+        visual_feats.extend(cl_data_file[label][:100])
+        attr_feats.extend((vae_data_file[label][:100]))
         #attr_feats.extend(np.mean(np.array(vae_data_file[label]), 0, keepdims=True))
-        visual_labels.extend([idx]*len(cl_data_file[label-80][:300]))
-        attr_labels.extend([idx]*len(vae_data_file[label][:300]))
+        visual_labels.extend([idx]*len(cl_data_file[label][:100]))
+        attr_labels.extend([idx]*len(vae_data_file[label][:100]))
         #attr_labels.extend([idx])
     visual_feats = np.array(visual_feats)
     attr_feats = np.array(attr_feats)
     all_feats = np.concatenate((visual_feats, attr_feats), 0)
-    feats_len = np.sum(all_feats*all_feats, 1)
-    feats_len = feats_len / np.sqrt(feats_len)
-    all_feats = all_feats / feats_len.reshape((-1, 1))
-    pdb.set_trace()
     all_labels = visual_labels + attr_labels
+    #all_feats = visual_feats
+    all_feats = all_feats / np.sqrt(np.sum(all_feats**2, 1, keepdims=True))
     all_feats_2D = tsne.fit_transform(all_feats)
     #all_feats_2D = tsne.fit_transform(visual_feats)
     #all_labels = visual_labels
+    fig, axes = plt.subplots(1, 2, figsize=(15, 6), sharex=True, sharey=True)
     colors = np.array(['r', 'g', 'b', 'c', 'm', 'y', 'k',  'orange', 'purple'])      
     for idx in range(all_feats_2D.shape[0]):
         feat = all_feats_2D[idx]
-        #if feat[0] < -30 or feat[1] < -30:
-        #  continue
+        if np.abs(feat[0]) > 50 or np.abs(feat[1]) > 50:
+          continue
         label = all_labels[idx]
         color = colors[label]
-        if idx < visual_feats.shape[0]:
+        if idx in [0, 100, 200, 300, 400]:
           marker = '*'
-          #continue
-        else:
+          size = 64
+          alpha = 1
+          axes[0].scatter(feat[0], feat[1], c=color, marker=marker, s=size, alpha=alpha) 
+          axes[1].scatter(feat[0], feat[1], c=color, marker=marker, s=size, alpha=alpha) 
+        elif  idx < visual_feats.shape[0]:
           marker = 'o'
-          #continue
-        plt.scatter(feat[0], feat[1], c=color, marker=marker) 
-    plt.savefig('features_base_mini.png')
+          size = 16
+          alpha = 0.3
+          axes[0].scatter(feat[0], feat[1], c=color, marker=marker, s=size, alpha=alpha) 
+        else:
+          marker = 'x'
+          size = 16
+          alpha = 0.3
+          axes[1].scatter(feat[0], feat[1], c=color, marker=marker, s=size, alpha=alpha) 
+    axes[0].set_title('Query Features') 
+    axes[1].set_title('Generated Features') 
+    plt.tight_layout()
+    plt.savefig('features_real_gen.pdf')
 
 def save_vae_features(out_file, attr_out_dir):
     cl_data_file = feat_loader.init_loader(out_file)
@@ -369,8 +481,8 @@ def save_vae_features(out_file, attr_out_dir):
     feats_vae = FeatsVAE(512, 512).cuda()
     feats_vae = train_vae(feature_loader, feats_vae, attributes)
     #torch.save({'state': feats_vae.state_dict()}, 'feats_vae_mini.pth') 
-    generate_feats(feats_vae, attributes, os.path.join(attr_out_dir, 'train_attr_ood.hdf5'), np.arange(0, 351))
-    generate_feats(feats_vae, attributes_test, os.path.join(attr_out_dir, 'test_attr_ood.hdf5'), np.arange(0, 160))
+    generate_feats(feats_vae, attributes, os.path.join(attr_out_dir, 'train_attr_tmp.hdf5'), np.arange(0, 351))
+    generate_feats(feats_vae, attributes_test, os.path.join(attr_out_dir, 'test_attr_tmp.hdf5'), np.arange(0, 160))
     #return feats_vae
 
 
