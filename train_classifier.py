@@ -143,7 +143,6 @@ def main(config):
         # train
         model.train()
         writer.add_scalar('lr', optimizer.param_groups[0]['lr'], epoch)
-
         for data, label in tqdm(train_loader, desc='train', leave=False):
             data, label = data.cuda(), label.cuda()
             logits = model(data)
@@ -158,7 +157,6 @@ def main(config):
             aves['ta'].add(acc)
 
             logits = None; loss = None
-
         # eval
         if eval_val:
             model.eval()
@@ -183,7 +181,9 @@ def main(config):
                     label = fs.make_nk_label(
                             n_way, n_query, ep_per_batch=4).cuda()
                     with torch.no_grad():
-                        logits = fs_model(x_shot, x_query).view(-1, n_way)
+                        x_shot, x_query, metric = fs_model(x_shot, x_query)
+                        logits = utils.compute_logits(
+                            x_query, x_shot, metric=metric, temp=fs_model.temp).view(-1, n_way)
                         acc = utils.compute_acc(logits, label)
                     aves['fsa-' + str(n_shot)].add(acc)
 
@@ -259,7 +259,6 @@ def main(config):
         else:
             torch.save(save_obj, os.path.join(save_path, 'epoch-ex.pth'))
 
-        writer.flush()
 
 
 if __name__ == '__main__':

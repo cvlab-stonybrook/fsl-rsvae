@@ -17,7 +17,8 @@ import utils.few_shot as fs
 import datasets.feature_loader as feat_loader
 from datasets.samplers import CategoriesSampler
 from extract_feats import save_features
-from train_vae_tiered import save_vae_features, get_vae_center
+from train_vae_tiered import save_vae_features, get_vae_center, visualize_feats, visualize_ood
+from train_gan import save_gan_features, visualize_gan_feats
 import copy
 def get_augmented_feats(vae_feats, x_shot):
     iter_num = 0
@@ -45,10 +46,10 @@ def mean_confidence_interval(data, confidence=0.95):
 
 def main(config):
     # dataset
-    dataset = datasets.make(config['dataset'], split='test')
-    #dataset = datasets.make(config['dataset'], split='train')
-    utils.log('dataset: {} (x{}), {}'.format(
-            dataset[0][0].shape, len(dataset), dataset.n_classes))
+    dataset = datasets.make(config['dataset'], split='train')
+    #train_dataset = datasets.make(config['dataset'], split='train')
+    #utils.log('dataset: {} (x{}), {}'.format(
+    #        dataset[0][0].shape, len(dataset), dataset.n_classes))
     if not args.sauc:
         n_way = 5
     else:
@@ -56,11 +57,11 @@ def main(config):
     n_shot, n_query = args.shot, 15
     n_batch = 200
     ep_per_batch = 4
-    batch_sampler = CategoriesSampler(
-            dataset.label, n_batch, n_way, n_shot + n_query,
-            ep_per_batch=ep_per_batch)
-    loader = DataLoader(dataset, batch_sampler=batch_sampler,
-                        num_workers=8, pin_memory=True)
+    #batch_sampler = CategoriesSampler(
+    #        dataset.label, n_batch, n_way, n_shot + n_query,
+    #        ep_per_batch=ep_per_batch)
+    #loader = DataLoader(dataset, batch_sampler=batch_sampler,
+    #                    num_workers=8, pin_memory=True)
     #train_loader = DataLoader(train_dataset, batch_size=128, shuffle=False,
     #                    num_workers=8, pin_memory=True)
 
@@ -95,8 +96,12 @@ def main(config):
     feats_dir = os.path.join(out_dir, 'features')
     print('Save training set features ...')
     #save_features(model, train_loader, out_file)
+    #visualize_ood(feats_dir)
+    #pdb.set_trace()
     print('Trainig CVAE ...')
-    save_vae_features(out_file, feats_dir)
+    visualize_ood(feats_dir)
+    pdb.set_trace()
+    #save_vae_features(out_file, feats_dir)
     vae_center = get_vae_center(feats_dir, split='test')
     for epoch in range(1, test_epochs + 1):
         for data, label in tqdm(loader, leave=False):
@@ -110,10 +115,15 @@ def main(config):
                 x_query = x_query.detach()
                 label_real = label.view(ep_per_batch, n_way, -1)[:,:,0].long()
                 vae_feats = vae_center[label_real].cuda()
+                #dist = torch.sqrt(torch.sum((x_shot-vae_feats.unsqueeze(2))**2, -1))
+                #dist = torch.exp(-0.5 * dist)
+                #dist = dist / torch.sum(dist, -1, keepdims=True)
                 #vae_feats = x_shot + torch.rand(x_shot.shape).cuda() * 0.001
                 #x_shot_aug = torch.autograd.Variable(copy.deepcopy(x_shot.detach()), requires_grad=True)
                 #aug_feats = get_augmented_feats(vae_feats, x_shot_aug)
                 #x_shot = x_shot*((n_shot)/(n_shot+3)) + vae_feats*(2/(n_shot+3))
+                #x_shot = torch.sum(x_shot*dist.unsqueeze(-1), -2)
+                x_shot = torch.mean(x_shot, -2)
                 x_shot = x_shot*((n_shot)/(n_shot+1)) + vae_feats*(1/(n_shot+1))
                 #x_shot = vae_feats
                 x_shot = F.normalize(x_shot, dim=-1) 

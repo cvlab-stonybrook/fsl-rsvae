@@ -1,6 +1,6 @@
 import argparse
 import yaml
-
+import pdb
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -75,6 +75,7 @@ def main(config):
             with torch.no_grad():
                 if not args.sauc:
                     x_shot, x_query, metric = model(x_shot, x_query)
+                    x_shot = torch.mean(x_shot, -2)
                     logits = utils.compute_logits(
                        x_query, x_shot, metric=metric, temp=model.temp).view(-1, n_way)
                     label = fs.make_nk_label(n_way, n_query,

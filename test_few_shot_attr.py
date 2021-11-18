@@ -17,7 +17,8 @@ import utils.few_shot as fs
 import datasets.feature_loader as feat_loader
 from datasets.samplers import CategoriesSampler
 from extract_feats import save_features
-from train_vae import save_vae_features, get_vae_center
+from train_vae import save_vae_features, get_vae_center, visualize_feats
+from train_gan import save_gan_features, visualize_gan_feats
 import copy
 def get_augmented_feats(vae_feats, x_shot):
     iter_num = 0
@@ -95,8 +96,11 @@ def main(config):
     feats_dir = os.path.join(out_dir, 'features')
     print('Save training set features ...')
     #save_features(model, train_loader, out_file)
-    print('Trainig CVAE ...')
-    save_vae_features(out_file, feats_dir)
+    print('Trainig VAE ...')
+    #save_vae_features(out_file, feats_dir)
+    #visualize_feats(feats_dir)
+    dist_all = []
+    acc_all = []
     vae_center = get_vae_center(feats_dir, split='test')
     for epoch in range(1, test_epochs + 1):
         for data, label in tqdm(loader, leave=False):
@@ -109,8 +113,13 @@ def main(config):
                 x_shot = x_shot.detach()
                 x_query = x_query.detach()
                 label_real = label.view(ep_per_batch, n_way, -1)[:,:,0]
-                #pdb.set_trace()
                 vae_feats = vae_center[label_real].cuda()
+                #dist = torch.sqrt(torch.sum((x_shot-vae_feats.unsqueeze(2))**2, -1))
+                #dist = 1 / dist**1
+                #dist = torch.ones((4,5,5)).cuda()
+                #dist = dist / torch.sum(dist, -1, keepdims=True)
+                #x_shot = torch.sum(x_shot*dist.unsqueeze(-1), -2)
+                x_shot = torch.mean(x_shot, -2)
                 #vae_feats = x_shot + torch.rand(x_shot.shape).cuda() * 0.001
                 #x_shot_aug = torch.autograd.Variable(copy.deepcopy(x_shot.detach()), requires_grad=True)
                 #aug_feats = get_augmented_feats(vae_feats, x_shot_aug)
@@ -121,13 +130,15 @@ def main(config):
                 logits = utils.compute_logits(
                        x_query, x_shot, metric=metric, temp=model.temp).view(-1, n_way)
                 ep_label = fs.make_nk_label(n_way, n_query, ep_per_batch=ep_per_batch).cuda()
+                #acc1 = (torch.argmax(logits,1) == ep_label).reshape(4, 75).sum(1) / 75.
+                #acc_all.extend(list(acc1.cpu().data.numpy()))
                 acc = utils.compute_acc(logits, ep_label)
                 aves['va'].add(acc, len(data))
                 va_lst.append(acc)
         print('test epoch {}: acc={:.2f} +- {:.2f} (%) (@{})'.format(
                 epoch, aves['va'].item() * 100,
                 mean_confidence_interval(va_lst) * 100, label[-1]))
-
+    pdb.set_trace()
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', default='./configs/test_few_shot.yaml')
