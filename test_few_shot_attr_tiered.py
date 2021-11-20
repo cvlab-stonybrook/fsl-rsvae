@@ -46,7 +46,7 @@ def mean_confidence_interval(data, confidence=0.95):
 
 def main(config):
     # dataset
-    dataset = datasets.make(config['dataset'], split='train')
+    dataset = datasets.make(config['dataset'], split='test')
     #train_dataset = datasets.make(config['dataset'], split='train')
     #utils.log('dataset: {} (x{}), {}'.format(
     #        dataset[0][0].shape, len(dataset), dataset.n_classes))
@@ -57,11 +57,11 @@ def main(config):
     n_shot, n_query = args.shot, 15
     n_batch = 200
     ep_per_batch = 4
-    #batch_sampler = CategoriesSampler(
-    #        dataset.label, n_batch, n_way, n_shot + n_query,
-    #        ep_per_batch=ep_per_batch)
-    #loader = DataLoader(dataset, batch_sampler=batch_sampler,
-    #                    num_workers=8, pin_memory=True)
+    batch_sampler = CategoriesSampler(
+            dataset.label, n_batch, n_way, n_shot + n_query,
+            ep_per_batch=ep_per_batch)
+    loader = DataLoader(dataset, batch_sampler=batch_sampler,
+                        num_workers=8, pin_memory=True)
     #train_loader = DataLoader(train_dataset, batch_size=128, shuffle=False,
     #                    num_workers=8, pin_memory=True)
 
@@ -99,8 +99,8 @@ def main(config):
     #visualize_ood(feats_dir)
     #pdb.set_trace()
     print('Trainig CVAE ...')
-    visualize_ood(feats_dir)
-    pdb.set_trace()
+    #visualize_ood(feats_dir)
+    #pdb.set_trace()
     #save_vae_features(out_file, feats_dir)
     vae_center = get_vae_center(feats_dir, split='test')
     for epoch in range(1, test_epochs + 1):

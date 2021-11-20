@@ -152,7 +152,8 @@ def main(config):
             label = fs.make_nk_label(n_train_way, n_query,
                     ep_per_batch=ep_per_batch).cuda()
 
-            logits = model(x_shot, x_query).view(-1, n_train_way)
+            x_shot, x_query, metric = model(x_shot, x_query)
+            logits = utils.compute_logits(x_query, x_shot, metric=metric, temp=model.temp).view(-1, n_train_way)
             loss = F.cross_entropy(logits, label)
             acc = utils.compute_acc(logits, label)
 
@@ -184,7 +185,8 @@ def main(config):
                         ep_per_batch=4).cuda()
 
                 with torch.no_grad():
-                    logits = model(x_shot, x_query).view(-1, n_way)
+                    x_shot, x_query, metric = model(x_shot, x_query)
+                    logits = utils.compute_logits(x_query, x_shot, metric=metric, temp=model.temp).view(-1, n_train_way)
                     loss = F.cross_entropy(logits, label)
                     acc = utils.compute_acc(logits, label)
                 
@@ -252,7 +254,7 @@ def main(config):
             max_va = aves['va']
             torch.save(save_obj, os.path.join(save_path, 'max-va.pth'))
 
-        writer.flush()
+        #writer.flush()
 
 
 if __name__ == '__main__':

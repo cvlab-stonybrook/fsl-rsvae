@@ -95,7 +95,7 @@ def remove_feats(cl_data_file):
     prob_dict = loadmat('prob_matrix_tiered_1shot.mat')
     for k, v in cl_data_file.items():
         prob = prob_dict[str(k)]
-        prob_idx = np.where(prob[0]>=0.6)[0]
+        prob_idx = np.where(prob[0]>=0.3)[0]
         #mean = np.mean(v, 0)
         #dist = np.sum((v - mean)**2, 1)
         #sort_idx = np.argsort(dist)
@@ -339,34 +339,37 @@ def visualize_ood(feats_dir):
       ood_mean[l] = np.mean(ood_feats, 0)
       dist = np.sum((cls_feats-cls_mean[l])**2, 1)
       cl_data_file[l] = np.array(cls_feats)[np.argsort(dist)]
-      dist = np.sum((ood_feats-ood_mean[l])**2, 1)
+      dist = np.sum((ood_feats-cls_mean[l])**2, 1)
       ood_data_file[l] = np.array(ood_feats)[np.argsort(dist)]
+      dist = np.sum((vae_feats-cls_mean[l])**2, 1)
+      vae_data_file[l] = np.array(ood_feats)[np.argsort(dist)]
     cls_vae_dist = np.sum((cls_mean - vae_mean)**2, 1)
     cls_ood_dist = np.sum((cls_mean - ood_mean)**2, 1)
     vae_ood_dist = cls_ood_dist - cls_vae_dist
     vis_real = []
     vae_real = []
     ood_real = []
+    #for l in [15, 115, 37]:
     for l in [122, 129, 33]:
-      vis_real.extend(cl_data_file[l][:50])
-      vae_real.extend(vae_data_file[l][:50])
-      ood_real.extend(ood_data_file[l][:50])
+      vis_real.extend(cl_data_file[l][:100])
+      vae_real.extend(vae_data_file[l][-100:])
+      ood_real.extend(ood_data_file[l][:100])
     all_feats = np.concatenate((np.array(vis_real), np.array(vae_real)), 0) 
     all_feats = np.concatenate((all_feats, np.array(ood_real)), 0) 
     all_feats = all_feats / np.sqrt(np.sum(all_feats**2, 1, keepdims=True))
-    all_labels = [0] * 50 + [1] * 50 + [2] * 50
+    all_labels = [0] * 100 + [1] * 100 + [2] * 100
     all_labels = all_labels * 3
     tsne = TSNE(n_components=2, random_state=0)
     all_feats_2D = tsne.fit_transform(all_feats)
     colors = ['r', 'g', 'b']
-    fig, axes = plt.subplots(1, 4, figsize=(28, 6), sharex=True, sharey=True)
-    plt.rcParams.update({'font.size': 18})
+    fig, axes = plt.subplots(1, 4, figsize=(30, 7.2), sharex=True, sharey=True)
+    plt.rcParams.update({'font.size': 22})
     for idx in range(all_feats_2D.shape[0]):
         feat = all_feats_2D[idx]
         color = colors[all_labels[idx]]
         if np.abs(feat[0]) > 50 or np.abs(feat[1]) > 50:
           continue
-        if idx in [0, 50, 100]:
+        if idx in [0, 100, 200]:
           marker = '*'
           size = 128
           alpha = 1
@@ -374,28 +377,40 @@ def visualize_ood(feats_dir):
           axes[1].scatter(feat[0], feat[1], c=color, marker=marker, s=size, alpha=alpha) 
           axes[2].scatter(feat[0], feat[1], c=color, marker=marker, s=size, alpha=alpha) 
           axes[3].scatter(feat[0], feat[1], c=color, marker=marker, s=size, alpha=alpha) 
-        elif idx < 150:
+        elif idx < 300:
           marker = 'o'
-          size = 64
+          size = 32
           alpha = 1
           axes[1].scatter(feat[0], feat[1], c=color, marker=marker, s=size, alpha=alpha) 
           axes[2].scatter(feat[0], feat[1], c=color, marker=marker, s=size, alpha=alpha) 
           axes[3].scatter(feat[0], feat[1], c=color, marker=marker, s=size, alpha=alpha) 
-        elif idx >= 150 and idx < 300:
+        elif idx >= 300 and idx < 600:
           marker = 'x'
-          size = 64
+          size = 32
           alpha = 0.3
           axes[2].scatter(feat[0], feat[1], c=color, marker=marker, s=size, alpha=alpha) 
           #continue
         else:
           marker = 'x'
-          size = 64
+          size = 32
           alpha = 0.3
           axes[3].scatter(feat[0], feat[1], c=color, marker=marker, s=size, alpha=alpha) 
     axes[0].set_title('Support Features') 
+    axes[0].text(0, -64, '(a)', wrap=True, horizontalalignment='center', fontsize=26)
+    axes[0].set_xticks([])
+    axes[0].set_yticks([])
     axes[1].set_title('Query Features') 
+    axes[1].text(0, -64, '(b)', wrap=True, horizontalalignment='center', fontsize=26)
+    axes[1].set_xticks([])
+    axes[1].set_yticks([])
     axes[2].set_title('Generated Features with SVAE') 
-    axes[3].set_title('Generated Features with SVAE*') 
+    axes[2].text(0, -64, '(c)', wrap=True, horizontalalignment='center', fontsize=26)
+    axes[2].set_xticks([])
+    axes[2].set_yticks([])
+    axes[3].set_title('Generated Features with R-SVAE') 
+    axes[3].text(0, -64, '(d)', wrap=True, horizontalalignment='center', fontsize=26)
+    axes[3].set_xticks([])
+    axes[3].set_yticks([])
     plt.tight_layout()
     plt.savefig('features_base_mini.pdf')
 
@@ -471,6 +486,7 @@ def visualize_feats(feats_dir):
 
 def save_vae_features(out_file, attr_out_dir):
     cl_data_file = feat_loader.init_loader(out_file)
+    pdb.set_trace()
     cl_data_file = remove_feats(cl_data_file)
     #pdb.set_trace()
     #cl_data_file = remove_feats(cl_data_file)
