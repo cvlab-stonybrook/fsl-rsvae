@@ -91,6 +91,7 @@ def remove_feats(cl_data_file):
     cl_mean_file = {}
     cl_var_file = {}
     weight_data_file = {}
+    remove_num = []
     for k, v in cl_data_file.items():
         mean_feats = np.mean(v, 0)
         cl_mean_file[k] = mean_feats
@@ -109,6 +110,7 @@ def remove_feats(cl_data_file):
         for idx in range(600):
           if prob[idx] > 0.9:
             cl_data_file[k].append(v[idx]) 
+        remove_num.append(np.sum(prob<0.9))
         #for sidx in sort_idx:
         #  cl_data_file[k].append(v[sidx])
         #  cl_data_file[k].append((cl_mean_file[k] + (np.random.normal(v[sidx].shape)*0.001)).astype(np.float32))
@@ -116,7 +118,7 @@ def remove_feats(cl_data_file):
         #all_feats = (np.random.multivariate_normal(mean=cl_mean_file[k], cov=cl_var_file[k], size=200)).astype(np.float32)
         #for all_feat in all_feats:
         #  cl_data_file[k].append(all_feat*0.3 + cl_mean_file[k]*0.7)
-
+    pdb.set_trace()
     return cl_data_file
 
 def interpolate_feats(cl_data_file):
@@ -134,9 +136,9 @@ def interpolate_feats(cl_data_file):
     return cl_data_file
 
 def get_vae_center(out_dir, split='train', use_mean=True):
-    attr_out_file = os.path.join(out_dir, '%s_attr_tmp.hdf5'%split)
+    attr_out_file = os.path.join(out_dir, '%s_attr.hdf5'%split)
     vae_data_file = feat_loader.init_loader(attr_out_file)
-    if split == 'train':
+    if 'train' in split:
       num = 64
     else:
       num = 20
@@ -159,7 +161,7 @@ def get_vae_center(out_dir, split='train', use_mean=True):
           mean_feats = np.array(feats)[:20]
         mean_feats = torch.from_numpy(mean_feats)
         mean_feats = F.normalize(mean_feats, dim=-1) 
-        if split == 'test': 
+        if 'test' in split: 
           k = k - 80
         vae_feats_all[k] = mean_feats
   
@@ -170,6 +172,8 @@ class FeatsVAE(nn.Module):
         super(FeatsVAE, self).__init__()
         self.linear = nn.Sequential(
             nn.Linear(x_dim+latent_dim, 4096),
+            #nn.LeakyReLU(),
+            #nn.Linear(4096, 4096),
             nn.LeakyReLU())
         self.linear_mu =  nn.Sequential(
             nn.Linear(4096, latent_dim),
@@ -180,6 +184,8 @@ class FeatsVAE(nn.Module):
         self.model = nn.Sequential(
             nn.Linear(2*latent_dim, 4096),
             nn.LeakyReLU(),
+            #nn.Linear(4096, 4096),
+            #nn.LeakyReLU(),
             nn.Linear(4096, x_dim),
             #nn.Sigmoid(),
         )
@@ -355,9 +361,10 @@ def save_vae_features(out_file, attr_out_dir):
     attributes = np.load('./mini_attr.npy')
     feats_vae = FeatsVAE(512, 512).cuda()
     feats_vae = train_vae(feature_loader, feats_vae, attributes)
+    #feats_vae.load_state_dict(torch.load('feats_vae_mini.pth')['state'])
     #torch.save({'state': feats_vae.state_dict()}, 'feats_vae_mini.pth') 
-    #generate_feats(feats_vae, attributes, os.path.join(attr_out_dir, 'train_attr_tmp.hdf5'), np.arange(0, 64))
-    generate_feats(feats_vae, attributes, os.path.join(attr_out_dir, 'test_attr_tmp.hdf5'), np.arange(80, 100))
+    generate_feats(feats_vae, attributes, os.path.join(attr_out_dir, 'train_attr.hdf5'), np.arange(0, 64))
+    generate_feats(feats_vae, attributes, os.path.join(attr_out_dir, 'test_attr.hdf5'), np.arange(80, 100))
     #return feats_vae
 
 
