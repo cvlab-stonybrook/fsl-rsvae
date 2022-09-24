@@ -43,6 +43,18 @@ def mean_confidence_interval(data, confidence=0.95):
     h = se * scipy.stats.t.ppf((1 + confidence) / 2., n - 1)
     return h
 
+def cal_acc_per_cls(acc_dict, logits, ep_label, label_real):
+    pred = torch.argmax(logits, 1).view(4, 5, 15)
+    ep_label = ep_label.view(4, 5, 15)
+    acc = torch.sum(ep_label == pred, -1).reshape(-1)
+    label_real = label_real.reshape(-1)
+    for l, a in zip(label_real, acc):
+      if str(l.item()) not in acc_dict.keys():
+        acc_dict[str(l.item())] = 0
+      acc_dict[str(l.item())] = acc_dict[str(l.item())] + a.item()
+    
+
+
 
 def main(config):
     # dataset
@@ -101,8 +113,9 @@ def main(config):
     print('Trainig CVAE ...')
     #visualize_ood(feats_dir)
     #pdb.set_trace()
-    #save_vae_features(out_file, feats_dir)
+    save_vae_features(out_file, feats_dir)
     vae_center = get_vae_center(feats_dir, split='test')
+    acc_dict = {}
     for epoch in range(1, test_epochs + 1):
         for data, label in tqdm(loader, leave=False):
             x_shot, x_query = fs.split_shot_query(
@@ -130,12 +143,14 @@ def main(config):
                 logits = utils.compute_logits(
                        x_query, x_shot, metric=metric, temp=model.temp).view(-1, n_way)
                 ep_label = fs.make_nk_label(n_way, n_query, ep_per_batch=ep_per_batch).cuda()
+                #cal_acc_per_cls(acc_dict, logits, ep_label, label_real)
                 acc = utils.compute_acc(logits, ep_label)
                 aves['va'].add(acc, len(data))
                 va_lst.append(acc)
         print('test epoch {}: acc={:.2f} +- {:.2f} (%) (@{})'.format(
                 epoch, aves['va'].item() * 100,
                 mean_confidence_interval(va_lst) * 100, label[-1]))
+    #pdb.set_trace()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
